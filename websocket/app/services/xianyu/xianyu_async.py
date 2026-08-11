@@ -1680,6 +1680,15 @@ class XianyuAsync:
                 if not config or not config.enabled:
                     logger.info(f"[{msg_time}] 【{self.cookie_id}】确认收货消息未启用，跳过")
                     return
+
+                # 商品维度过滤：配置了限定商品ID时，仅对匹配商品发送（避免误发给其他商品买家）
+                config_item_id = (getattr(config, 'item_id', None) or '').strip()
+                if config_item_id and (item_id or '') != config_item_id:
+                    logger.info(
+                        f"[{msg_time}] 【{self.cookie_id}】确认收货消息仅限商品 {config_item_id}，"
+                        f"当前商品 {item_id or '未知'}，跳过"
+                    )
+                    return
                 
                 # 检查是否有内容需要发送
                 has_image = config.message_image and config.message_image.strip()

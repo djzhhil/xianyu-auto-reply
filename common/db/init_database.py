@@ -880,6 +880,7 @@ class DatabaseInitializer:
             CREATE TABLE IF NOT EXISTS xy_confirm_receipt_messages (
                 id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
                 account_id VARCHAR(80) NOT NULL COMMENT '账号ID',
+                item_id VARCHAR(64) DEFAULT NULL COMMENT '限定商品ID（为空则账号内全部商品生效）',
                 enabled TINYINT(1) DEFAULT 0 COMMENT '是否启用',
                 message_content TEXT COMMENT '消息文本内容',
                 message_image VARCHAR(512) COMMENT '消息图片URL',
