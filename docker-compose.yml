@@ -66,6 +66,8 @@ services:
       dockerfile: backend-web/Dockerfile
     container_name: xianyu-backend-web
     restart: unless-stopped
+    # 以 tini 作为 PID 1,回收 playwright/chrome 等退出后的僵尸子进程
+    init: true
     environment:
       - ENVIRONMENT=production
       - MYSQL_HOST=mysql
@@ -129,6 +131,8 @@ services:
       dockerfile: websocket/Dockerfile
     container_name: xianyu-websocket
     restart: unless-stopped
+    # 以 tini 作为 PID 1,回收 playwright/chrome 等退出后的僵尸子进程
+    init: true
     environment:
       - ENVIRONMENT=production
       - MYSQL_HOST=mysql
@@ -184,6 +188,8 @@ services:
       dockerfile: scheduler/Dockerfile
     container_name: xianyu-scheduler
     restart: unless-stopped
+    # 以 tini 作为 PID 1,回收 playwright/chrome 等退出后的僵尸子进程
+    init: true
     environment:
       - ENVIRONMENT=production
       - MYSQL_HOST=mysql
@@ -237,6 +243,8 @@ services:
       dockerfile: docker/frontend/Dockerfile
     container_name: xianyu-frontend
     restart: unless-stopped
+    # 以 tini 作为 PID 1,回收退出后的僵尸子进程
+    init: true
     environment:
       - TZ=Asia/Shanghai
     ports:
