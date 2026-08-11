@@ -7,7 +7,8 @@
 3. 调用check_can_rate检查是否可以评价
 4. 执行评价操作
 5. 记录执行日志到scheduled_rate_log表
-6. 对不能评价的订单进行冷却，10分钟内不再重复处理
+6. 对不能评价的订单进行冷却：普通失败 10 分钟冷却；
+   买家等待型失败（如订单未交易成功，需等买家确认收货）使用 1 小时长冷却，避免高频无效请求
 """
 from __future__ import annotations
 
@@ -33,6 +34,12 @@ _order_cooldown_cache: Dict[str, datetime] = {}
 # 冷却时间（秒）
 ORDER_COOLDOWN_SECONDS = 600  # 10分钟
 
+# 买家等待型失败（订单未交易成功等，需等待买家在平台确认收货，短期不会变化）的长冷却时间（秒）
+UNSETTLED_COOLDOWN_SECONDS = 3600  # 1小时
+
+# 触发长冷却的错误信息关键字
+LONG_COOLDOWN_KEYWORDS = ("未交易成功",)
+
 
 def is_order_in_cooldown(order_no: str) -> bool:
     """
@@ -56,16 +63,22 @@ def is_order_in_cooldown(order_no: str) -> bool:
     return True
 
 
-def add_order_to_cooldown(order_no: str) -> None:
+def add_order_to_cooldown(
+    order_no: str,
+    cooldown_seconds: int = ORDER_COOLDOWN_SECONDS
+) -> None:
     """
     将订单加入冷却缓存
     
     Args:
         order_no: 订单号
+        cooldown_seconds: 冷却时长（秒），默认使用普通冷却时长
     """
-    expire_time = datetime.now() + timedelta(seconds=ORDER_COOLDOWN_SECONDS)
+    expire_time = datetime.now() + timedelta(seconds=cooldown_seconds)
     _order_cooldown_cache[order_no] = expire_time
-    logger.debug(f"[定时补评价] 订单 {order_no} 加入冷却，过期时间: {expire_time}")
+    logger.debug(
+        f"[定时补评价] 订单 {order_no} 加入冷却（{cooldown_seconds}秒），过期时间: {expire_time}"
+    )
 
 
 def cleanup_expired_cooldowns() -> None:
@@ -236,8 +249,16 @@ class RateTask:
                     logger.info(f"[定时补评价] 账号 {account_id} Cookie已通过Set-Cookie更新，后续订单使用最新Cookie")
                 
                 # 如果处理失败且不是已评价的情况，加入冷却
+                # 买家等待型失败（订单未交易成功等）使用长冷却，避免高频无效请求
                 if not success and error_message and '已评价' not in error_message:
-                    add_order_to_cooldown(order.order_no)
+                    cooldown_seconds = ORDER_COOLDOWN_SECONDS
+                    if any(kw in error_message for kw in LONG_COOLDOWN_KEYWORDS):
+                        cooldown_seconds = UNSETTLED_COOLDOWN_SECONDS
+                        logger.info(
+                            f"[定时补评价] 订单 {order.order_no} 为买家等待型失败"
+                            f"（{error_message}），进入长冷却 {cooldown_seconds} 秒，避免无效请求"
+                        )
+                    add_order_to_cooldown(order.order_no, cooldown_seconds=cooldown_seconds)
                 
                 # 记录日志到数据库
                 await self._save_log(
