@@ -1864,8 +1864,41 @@ class XianyuAsync:
         消息通过 WebSocket 发出后立即返回成功（不阻塞自动回复）。
         同时注册 mid 等待队列，返回结果中携带 mid，供上层在写入日志后
         异步等待服务端响应、回写发送状态（识别 CSI_FORBID 安全拦截等失败）。
+
+        发送前做两项硬校验，避免“假成功”：
+        1. chat_id 为占位符（FAILED_ 开头，真实会话创建失败）时直接拒绝发送，
+           消息无法路由到买家，绝不能当成发送成功；
+        2. WebSocket 连接未就绪（重连中/断开等）时直接拒绝发送，
+           避免把数据帧写入已断开的连接后被误判为成功。
         """
         try:
+            # 占位 chat_id（创建会话失败时写入的 FAILED_xxx）不是真实会话，拒绝发送
+            if chat_id and str(chat_id).startswith("FAILED_"):
+                err_msg = f"会话ID为占位符({chat_id})，真实会话创建失败，无法发送消息"
+                logger.warning(f"【{self.cookie_id}】拒绝发送: {err_msg}")
+                return {
+                    "success": False,
+                    "mode": "text",
+                    "content": content,
+                    "mid": None,
+                    "error_message": err_msg,
+                }
+
+            # 连接未就绪时拒绝发送（重连中/断开/关闭等状态）
+            conn_state = None
+            if self.connection_manager is not None:
+                conn_state = self.connection_manager.connection_state
+            if conn_state is not None and conn_state != ConnectionState.CONNECTED:
+                err_msg = f"WebSocket连接未就绪(当前状态: {conn_state.value if conn_state else 'unknown'})，消息未发送"
+                logger.warning(f"【{self.cookie_id}】拒绝发送: {err_msg}")
+                return {
+                    "success": False,
+                    "mode": "text",
+                    "content": content,
+                    "mid": None,
+                    "error_message": err_msg,
+                }
+
             import base64
             from common.utils.xianyu_utils import generate_mid, generate_uuid
 
@@ -1976,6 +2009,19 @@ class XianyuAsync:
             response = await asyncio.wait_for(send_future, timeout=timeout)
             return self._extract_send_reject_reason(response)
         except asyncio.TimeoutError:
+            # 服务端在超时窗口内未回带相同 mid 的响应。
+            # 正常情况下服务端可能不回执，超时按“未拦截”处理（返回 None）；
+            # 但若此时连接已断开/重连中，消息大概率未送达，必须判失败，
+            # 否则断线窗口内发出的消息会被静默记成成功（假成功）。
+            conn_state = None
+            if self.connection_manager is not None:
+                conn_state = self.connection_manager.connection_state
+            if conn_state is not None and conn_state != ConnectionState.CONNECTED:
+                # 前缀“网络异常”用于与平台安全拦截（CSI_FORBID 等）区分：
+                # 调用方据此提示用户“消息可能未送达”，而非“被平台拦截”
+                reason = f"网络异常: 等待回执超时且连接断开(当前状态: {conn_state.value})，消息可能未送达"
+                logger.warning(f"【{self.cookie_id}】{reason}")
+                return reason
             return None
         except Exception as e:
             logger.warning(f"【{self.cookie_id}】检测发送结果异常: {self._safe_str(e)}")

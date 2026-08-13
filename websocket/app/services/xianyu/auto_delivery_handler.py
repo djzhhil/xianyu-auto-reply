@@ -219,6 +219,11 @@ class AutoDeliveryHandler:
         """
         current_ws = websocket
         result = None
+        # 占位 chat_id（FAILED_ 开头）不重试：重试必然失败，白白浪费 5×2 秒并刷日志
+        if chat_id and str(chat_id).startswith("FAILED_"):
+            err_msg = f"会话ID为占位符({chat_id})，真实会话创建失败，无法发送消息"
+            logger.warning(f"【{self.cookie_id}】拒绝发送(不重试): {err_msg}")
+            return {"success": False, "mode": "text", "content": content, "error_message": err_msg}
         for attempt in range(max_retries + 1):
             result = await self.send_msg(current_ws, chat_id, send_user_id, content)
             if isinstance(result, dict) and result.get("success"):
